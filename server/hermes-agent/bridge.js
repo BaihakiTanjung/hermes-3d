@@ -1,5 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 /**
  * Translates the Hermes3D gateway protocol into hermes-agent's JSON-RPC 2.0 API.
  *
