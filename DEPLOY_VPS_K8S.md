@@ -105,7 +105,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: hermes3d-secret
-  namespace: hermes3d
+  namespace: hermes
 type: Opaque
 stringData:
   STUDIO_ACCESS_TOKEN: "ganti-token-login-ui-bebas"
@@ -114,7 +114,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hermes3d-ui
-  namespace: hermes3d
+  namespace: hermes
   labels:
     app: hermes3d-ui
 spec:
@@ -148,7 +148,7 @@ spec:
                   key: STUDIO_ACCESS_TOKEN
             # Arahkan ke IP VPS tempat Hermes Agent berjalan
             - name: HERMES3D_GATEWAY_URL
-              value: "ws://103.77.78.114:9119"
+              value: "ws://:9119"
           resources:
             requests:
               cpu: "250m"
@@ -161,7 +161,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: hermes3d-service
-  namespace: hermes3d
+  namespace: hermes
 spec:
   selector:
     app: hermes3d-ui
@@ -175,7 +175,7 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: hermes3d-ingress
-  namespace: hermes3d
+  namespace: hermes
 spec:
   entryPoints:
     - websecure

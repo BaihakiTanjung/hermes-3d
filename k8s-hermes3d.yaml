@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: hermes3d
+  name: hermes
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: hermes3d-secret
-  namespace: hermes3d
+  namespace: hermes
 type: Opaque
 stringData:
   STUDIO_ACCESS_TOKEN: "ganti-token-login-ui-bebas"
@@ -17,7 +17,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hermes3d-ui
-  namespace: hermes3d
+  namespace: hermes
   labels:
     app: hermes3d-ui
 spec:
@@ -30,6 +30,7 @@ spec:
       labels:
         app: hermes3d-ui
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: hermes3d
           image: ghcr.io/baihakitanjung/hermes-3d:latest
@@ -49,22 +50,46 @@ spec:
                 secretKeyRef:
                   name: hermes3d-secret
                   key: STUDIO_ACCESS_TOKEN
-            # Point gateway URL ke IP VPS host tempat Hermes Agent jalan
+            - name: HERMES3D_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes3d-secret
+                  key: HERMES_GATEWAY_TOKEN
+            - name: HERMES3D_ADAPTER_TYPE
+              value: "hermes-agent"
+            # Opsi 2: Downward API mengambil IP internal host node tempat pod ini berjalan
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            # K8s otomatis melakukan env expansion $(HOST_IP) ke internal gateway IP
             - name: HERMES3D_GATEWAY_URL
-              value: "ws://103.77.78.114:9119"
+              value: "ws://$(HOST_IP):9119"
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "200m"
+              memory: "384Mi"
             limits:
               cpu: "1000m"
               memory: "1Gi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: hermes3d-service
-  namespace: hermes3d
+  namespace: hermes
 spec:
   selector:
     app: hermes3d-ui
@@ -73,12 +98,45 @@ spec:
       port: 3000
       targetPort: 3000
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes3d-network-policy
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      app: hermes3d-ui
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Izinkan traffic HTTP dari Ingress Traefik
+    - ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Akses ke port 9119 host node VPS
+    - ports:
+        - port: 9119
+          protocol: TCP
+    # Akses keluar untuk 9Router / LLM endpoints (jika UI perlu nembak langsung)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
 # Traefik IngressRoute
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: hermes3d-ingress
-  namespace: hermes3d
+  namespace: hermes
 spec:
   entryPoints:
     - websecure
