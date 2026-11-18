@@ -3,9 +3,13 @@ module.exports = {
     {
       name: "hermes-backend",
       script: "hermes",
-      args: "serve --port 9119 --skip-build",
+      args: "serve --host 0.0.0.0 --port 9119 --skip-build",
       env: {
+        // Token session gateway untuk koneksi WebSocket dari Hermes3D UI
         HERMES_DASHBOARD_SESSION_TOKEN: process.env.HERMES_DASHBOARD_SESSION_TOKEN || "mysecrettoken123",
+        // Wajib saat bind 0.0.0.0 agar hermes serve tidak meminta prompt interaktif username/password
+        HERMES_DASHBOARD_USERNAME: process.env.HERMES_DASHBOARD_USERNAME || "admin",
+        HERMES_DASHBOARD_PASSWORD: process.env.HERMES_DASHBOARD_PASSWORD || "hermesadmin123",
       },
       restart_delay: 4000,
       autorestart: true,
