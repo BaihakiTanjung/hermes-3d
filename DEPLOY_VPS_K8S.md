@@ -109,7 +109,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: hermes3d-secret
-  namespace: hermes
+  namespace: hermes-3d
 type: Opaque
 stringData:
   STUDIO_ACCESS_TOKEN: "ganti-token-login-ui-bebas"
@@ -118,7 +118,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hermes3d-ui
-  namespace: hermes
+  namespace: hermes-3d
   labels:
     app: hermes3d-ui
 spec:
@@ -165,7 +165,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: hermes3d-service
-  namespace: hermes
+  namespace: hermes-3d
 spec:
   selector:
     app: hermes3d-ui
@@ -179,7 +179,7 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: hermes3d-ingress
-  namespace: hermes
+  namespace: hermes-3d
 spec:
   entryPoints:
     - websecure
