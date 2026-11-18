@@ -1,29 +1,30 @@
 module.exports = {
   apps: [
     {
-      name: "hermes-backend",
-      script: "hermes",
-      args: "serve --host 0.0.0.0 --port 9119 --skip-build",
-      env: {
-        // Token session gateway untuk koneksi WebSocket dari Hermes3D UI
-        HERMES_DASHBOARD_SESSION_TOKEN: process.env.HERMES_DASHBOARD_SESSION_TOKEN || "mysecrettoken123",
-        // Wajib saat bind 0.0.0.0 agar hermes serve tidak meminta prompt interaktif username/password
-        HERMES_DASHBOARD_USERNAME: process.env.HERMES_DASHBOARD_USERNAME || "admin",
-        HERMES_DASHBOARD_PASSWORD: process.env.HERMES_DASHBOARD_PASSWORD || "hermesadmin123",
-      },
-      restart_delay: 4000,
-      autorestart: true,
-    },
-    {
       name: "hermes3d-ui",
       cwd: __dirname,
       script: "node",
       args: "server/index.js",
       env: {
         NODE_ENV: "production",
-        PORT: 3000,
-        HOST: "0.0.0.0",
+        PORT: process.env.PORT || 3000,
+        HOST: process.env.HOST || "0.0.0.0",
         STUDIO_ACCESS_TOKEN: process.env.STUDIO_ACCESS_TOKEN || "mysecrettoken123",
+      },
+      restart_delay: 4000,
+      autorestart: true,
+    },
+    {
+      name: "hermes-adapter",
+      cwd: __dirname,
+      script: "node",
+      args: "server/hermes-gateway-adapter.js",
+      env: {
+        // Port adapter websocket (default: 18789)
+        HERMES_GATEWAY_PORT: process.env.HERMES_GATEWAY_PORT || 18789,
+        // Target endpoint Hermes HTTP API upstream (default: http://localhost:8642)
+        HERMES_API_URL: process.env.HERMES_API_URL || "http://localhost:8642",
+        HERMES_API_KEY: process.env.HERMES_API_KEY || "",
       },
       restart_delay: 4000,
       autorestart: true,
