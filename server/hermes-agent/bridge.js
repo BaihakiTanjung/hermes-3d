@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 /**
  * Translates the Hermes3D gateway protocol into hermes-agent's JSON-RPC 2.0 API.
  *
@@ -186,7 +188,16 @@ const toHermes3dAgents = (profiles) => {
     .map((p) => {
       const name = asString(p.name);
       const isDefault = p.is_default === true;
-      const display = asString(p.display_name) || toDisplayName(name);
+      const ALIASES = {
+        "paos-design": "Tukang Design",
+        "paos-content": "Tukang Content",
+        "paos-coder": "Tukang Coding",
+        "paos-research": "Tukang Research",
+        "paos-video": "Tukang Editing",
+        "paos-command": "Tukang Suruh",
+        "paos-devops": "Tukang Deploy",
+      };
+      const display = ALIASES[name] || asString(p.display_name) || toDisplayName(name);
       // The long profile descriptions read as a role ("Allan — technical
       // planner…"); keep the part after the dash so the desk label stays short.
       const description = asString(p.description);
@@ -590,18 +601,78 @@ function createHermesAgentUpstream(options) {
           })),
         });
 
-      case "agents.files.get":
-        return resOk(id, { file: { missing: true } });
+      case "agents.files.get": {
+        const agentId = asString(p.agentId);
+        const fileName = asString(p.name);
+        const agent = agentRoster.find((a) => a.id === agentId);
+        const targetDir = agent?.profile
+          ? path.join(process.env.HOME || "", ".hermes/profiles", agent.profile)
+          : path.join(process.env.HOME || "", ".hermes");
+        const filePath = path.join(targetDir, fileName);
 
-      case "agents.files.set":
-        return resOk(id, {});
+        if (fs.existsSync(filePath)) {
+          try {
+            const content = fs.readFileSync(filePath, "utf8");
+            return resOk(id, {
+              file: { missing: false, content, path: filePath },
+              workspace: targetDir,
+            });
+          } catch (err) {
+            return resOk(id, { file: { missing: true } });
+          }
+        }
+        return resOk(id, { file: { missing: true }, workspace: targetDir });
+      }
+
+      case "agents.files.set": {
+        const agentId = asString(p.agentId);
+        const fileName = asString(p.name);
+        const content = typeof p.content === "string" ? p.content : "";
+        const agent = agentRoster.find((a) => a.id === agentId);
+        const targetDir = agent?.profile
+          ? path.join(process.env.HOME || "", ".hermes/profiles", agent.profile)
+          : path.join(process.env.HOME || "", ".hermes");
+        const filePath = path.join(targetDir, fileName);
+
+        try {
+          fs.mkdirSync(targetDir, { recursive: true });
+          fs.writeFileSync(filePath, content, "utf8");
+          return resOk(id, { ok: true });
+        } catch (err) {
+          log(`[hermes-agent] failed writing ${filePath}: ${errorMessage(err)}`);
+          return resErr(id, "write_failed", errorMessage(err));
+        }
+      }
+
+      case "agents.create": {
+        const name = asString(p.name);
+        if (!name) return resErr(id, "invalid_params", "name is required");
+        try {
+          await client.request("profiles.create", { name });
+          await loadAgentRoster();
+          const created = agentRoster.find((a) => a.id === name || a.name.toLowerCase() === name.toLowerCase());
+          const agentId = created ? created.id : name;
+          return resOk(id, { ok: true, agentId, name });
+        } catch (err) {
+          log(`[hermes-agent] profiles.create failed: ${errorMessage(err)}`);
+          return resErr(id, "hermes_agent.create_failed", errorMessage(err));
+        }
+      }
 
       case "config.get":
         return resOk(id, {
-          config: { gateway: { reload: { mode: "hot" } } },
+          config: {
+            gateway: { reload: { mode: "hot" } },
+            agents: {
+              list: agentRoster.map((a) => ({
+                id: a.id,
+                model: a.model || null,
+              })),
+            },
+          },
           hash: "hermes-agent",
           exists: true,
-          path: "",
+          path: "/Users/bae/.hermes/config.yaml",
         });
 
       case "config.patch":
@@ -631,7 +702,7 @@ function createHermesAgentUpstream(options) {
                 updatedAt: Date.now(),
                 displayName: "Main",
                 origin: { label: agent.name, provider: "hermes" },
-                modelProvider: "hermes",
+                model: agent.model || undefined,
               },
               ...stored.map((s) => ({
                 key: `agent:${agent.id}:${asString(s.id)}`,
@@ -810,16 +881,29 @@ function createHermesAgentUpstream(options) {
       }
 
       case "models.list": {
+        const collectProfileModels = () =>
+          Array.from(new Set(agentRoster.map((a) => a.model).filter(Boolean))).map((m) => ({
+            id: m,
+            name: m,
+          }));
+
         try {
           const result = await client.request("model.options", {});
           const options = Array.isArray(result?.options) ? result.options : [];
-          const models = options
+          let models = options
             .map((o) => asString(o?.id) || asString(o?.slug) || asString(o?.model))
             .filter(Boolean)
             .map((modelId) => ({ id: modelId, name: modelId }));
+
+          if (!models.length) {
+            const fallback = collectProfileModels();
+            if (fallback.length) models = fallback;
+          }
+
           return resOk(id, { models: models.length ? models : [{ id: "hermes", name: "hermes" }] });
         } catch {
-          return resOk(id, { models: [{ id: "hermes", name: "hermes" }] });
+          const fallback = collectProfileModels();
+          return resOk(id, { models: fallback.length ? fallback : [{ id: "hermes", name: "hermes" }] });
         }
       }
 
