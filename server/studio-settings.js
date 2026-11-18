@@ -67,6 +67,15 @@ const readHermesGatewayDefaults = (env = process.env) => {
 };
 
 const loadUpstreamGatewaySettings = (env = process.env) => {
+  const envUrl = (env.HERMES3D_GATEWAY_URL || "").trim();
+  if (envUrl) {
+    return {
+      url: envUrl,
+      token: (env.HERMES3D_GATEWAY_TOKEN || "").trim(),
+      adapterType: (env.HERMES3D_ADAPTER_TYPE || "hermes-agent").trim(),
+      settingsPath: null,
+    };
+  }
   const settingsPath = resolveStudioSettingsPath(env);
   const parsed = readJsonFile(settingsPath);
   const gateway = parsed && typeof parsed === "object" ? parsed.gateway : null;

@@ -1,8 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
 /**
  * Translates the Hermes3D gateway protocol into hermes-agent's JSON-RPC 2.0 API.
  *
@@ -169,6 +167,11 @@ const fallbackAgent = () => ({
   role: "",
   profile: "",
 });
+
+/** Hermes state root: HERMES_STATE_DIR wins so a PVC can hold profiles. */
+const resolveHermesHome = () =>
+  (process.env.HERMES_STATE_DIR || "").trim() ||
+  path.join(process.env.HOME || "", ".hermes");
 
 /** Title-case a profile directory name for display ("allan" -> "Allan"). */
 const toDisplayName = (name) =>
@@ -609,8 +612,8 @@ function createHermesAgentUpstream(options) {
         const fileName = asString(p.name);
         const agent = agentRoster.find((a) => a.id === agentId);
         const targetDir = agent?.profile
-          ? path.join(process.env.HOME || "", ".hermes/profiles", agent.profile)
-          : path.join(process.env.HOME || "", ".hermes");
+          ? path.join(resolveHermesHome(), "profiles", agent.profile)
+          : resolveHermesHome();
         const filePath = path.join(targetDir, fileName);
 
         if (fs.existsSync(filePath)) {
@@ -633,8 +636,8 @@ function createHermesAgentUpstream(options) {
         const content = typeof p.content === "string" ? p.content : "";
         const agent = agentRoster.find((a) => a.id === agentId);
         const targetDir = agent?.profile
-          ? path.join(process.env.HOME || "", ".hermes/profiles", agent.profile)
-          : path.join(process.env.HOME || "", ".hermes");
+          ? path.join(resolveHermesHome(), "profiles", agent.profile)
+          : resolveHermesHome();
         const filePath = path.join(targetDir, fileName);
 
         try {
@@ -662,6 +665,52 @@ function createHermesAgentUpstream(options) {
         }
       }
 
+      case "agents.update": {
+        const agentId = asString(p.agentId);
+        const nextName = asString(p.name);
+        if (!agentId || !nextName) return resErr(id, "invalid_params", "agentId and name are required");
+        const agent = agentRoster.find((a) => a.id === agentId);
+        const profile = agent?.profile || agentId;
+        const slug = nextName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        try {
+          execFileSync("hermes", ["profile", "rename", profile, slug]);
+        } catch {
+          const root = path.join(resolveHermesHome(), "profiles");
+          const from = profile === "default" ? resolveHermesHome() : path.join(root, profile);
+          const to = path.join(root, slug);
+          try {
+            if (fs.existsSync(from) && from !== to) fs.renameSync(from, to);
+          } catch (err) {
+            log(`[hermes-agent] profile rename failed: ${errorMessage(err)}`);
+            return resErr(id, "rename_failed", errorMessage(err));
+          }
+        }
+        await loadAgentRoster();
+        return resOk(id, { ok: true, agentId: slug, name: nextName });
+      }
+
+      case "agents.delete": {
+        const agentId = asString(p.agentId);
+        if (!agentId) return resErr(id, "invalid_params", "agentId is required");
+        const agent = agentRoster.find((a) => a.id === agentId);
+        const profile = agent?.profile || agentId;
+        try {
+          execFileSync("hermes", ["profile", "delete", profile, "--yes"]);
+        } catch {
+          const targetDir = path.join(resolveHermesHome(), "profiles", profile);
+          if (profile !== "default" && fs.existsSync(targetDir)) {
+            try {
+              fs.rmSync(targetDir, { recursive: true, force: true });
+            } catch (err) {
+              log(`[hermes-agent] profile delete failed: ${errorMessage(err)}`);
+              return resErr(id, "delete_failed", errorMessage(err));
+            }
+          }
+        }
+        await loadAgentRoster();
+        return resOk(id, { ok: true, removedBindings: 1 });
+      }
+
       case "config.get":
         return resOk(id, {
           config: {
@@ -675,7 +724,7 @@ function createHermesAgentUpstream(options) {
           },
           hash: "hermes-agent",
           exists: true,
-          path: "/Users/bae/.hermes/config.yaml",
+          path: path.join(resolveHermesHome(), "config.yaml"),
         });
 
       case "config.patch":

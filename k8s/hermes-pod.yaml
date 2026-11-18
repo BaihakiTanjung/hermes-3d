@@ -1,0 +1,247 @@
+# Hermes Agent + Hermes3D in ONE pod (namespace: hermes).
+# Agent and UI share the pod network, so the gateway stays on 127.0.0.1:9119
+# and is never exposed outside the pod.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hermes
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hermes-secrets
+  namespace: hermes
+type: Opaque
+stringData:
+  # Session token for the agent gateway; must match on both containers.
+  HERMES_DASHBOARD_SESSION_TOKEN: "change-me-gateway-token"
+  # Browser login token for the Hermes3D UI.
+  STUDIO_ACCESS_TOKEN: "change-me-ui-token"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-state
+  namespace: hermes
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes
+  namespace: hermes
+  labels:
+    app: hermes
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # s6-overlay in the agent image chowns /opt/data to HERMES_UID, so the
+      # volume is group-owned by the pod fsGroup and writable by both images.
+      securityContext:
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: hermes-agent
+          image: ghcr.io/baihakitanjung/hermes-agent:latest
+          imagePullPolicy: IfNotPresent
+          # Loopback bind: only reachable from the UI container in this pod.
+          args: ["serve", "--host", "127.0.0.1", "--port", "9119", "--skip-build"]
+          env:
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HERMES_UID
+              value: "10000"
+            - name: HERMES_GID
+              value: "10000"
+            - name: HERMES_DASHBOARD_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secrets
+                  key: HERMES_DASHBOARD_SESSION_TOKEN
+          ports:
+            - name: gateway
+              containerPort: 9119
+          volumeMounts:
+            - name: state
+              mountPath: /opt/data
+            - name: agent-tmp
+              mountPath: /tmp
+          startupProbe:
+            tcpSocket:
+              port: gateway
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: gateway
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            # s6-overlay cont-init must chown the PVC and drop to a runtime user,
+            # so this container keeps root. Network exposure is loopback-only.
+            runAsNonRoot: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"]
+
+        - name: hermes3d-ui
+          image: ghcr.io/baihakitanjung/hermes-3d:latest
+          imagePullPolicy: Always
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: HOST
+              value: "0.0.0.0"
+            - name: HOME
+              value: /tmp
+            # Same PVC as the agent: Agent Editor reads/writes real profile files.
+            - name: HERMES_STATE_DIR
+              value: /opt/data
+            # In-pod loopback: no public port, no firewall rule needed.
+            - name: HERMES3D_GATEWAY_URL
+              value: ws://127.0.0.1:9119
+            - name: HERMES3D_ADAPTER_TYPE
+              value: hermes-agent
+            - name: HERMES3D_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secrets
+                  key: HERMES_DASHBOARD_SESSION_TOKEN
+            - name: STUDIO_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secrets
+                  key: STUDIO_ACCESS_TOKEN
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: state
+              mountPath: /opt/data
+            - name: ui-tmp
+              mountPath: /tmp
+            - name: ui-cache
+              mountPath: /app/.next/cache
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 10000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: hermes-state
+        - name: agent-tmp
+          emptyDir: {}
+        - name: ui-tmp
+          emptyDir: {}
+        - name: ui-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes3d
+  namespace: hermes
+spec:
+  selector:
+    app: hermes
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes-default-deny
+  namespace: hermes
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes-allow
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      app: hermes
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Outbound to LLM/router APIs (443) and SQLite-free HTTP model endpoints
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hermes3d
+  namespace: hermes
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`hermes.domainkamu.com`)
+      kind: Rule
+      services:
+        - name: hermes3d
+          port: 3000
+  tls:
+    secretName: hermes3d-tls
