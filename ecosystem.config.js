@@ -22,6 +22,7 @@ module.exports = {
       env: {
         // Port adapter websocket (default: 18789)
         HERMES_GATEWAY_PORT: process.env.HERMES_GATEWAY_PORT || 18789,
+        HERMES_ADAPTER_HOST: process.env.HERMES_ADAPTER_HOST || "10.20.0.18",
         // Target endpoint Hermes HTTP API upstream (default: http://localhost:8642)
         HERMES_API_URL: process.env.HERMES_API_URL || "http://localhost:8642",
         HERMES_API_KEY: process.env.HERMES_API_KEY || "",
