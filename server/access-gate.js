@@ -136,7 +136,7 @@ function createAccessGate(options) {
 
   const handleHttp = (req, res) => {
     const pathname = String(req.url || "/").split("?")[0];
-    if ((req.method === "GET" && pathname === "/login") || (req.method === "POST" && pathname === "/api/auth/login")) return false;
+    if ((req.method === "GET" && (pathname === "/login" || pathname.startsWith("/_next/") || pathname === "/favicon.ico")) || (req.method === "POST" && pathname === "/api/auth/login")) return false;
     if (req.method === "POST" && pathname === "/api/auth/logout") { handleLogout(req, res); return true; }
     if (!enabled) return false;
     const auth = getAuthState(req);
