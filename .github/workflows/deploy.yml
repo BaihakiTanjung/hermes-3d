@@ -1,17 +1,17 @@
-name: Build and Publish Hermes3D (Manual)
+name: Build Portfolio Image
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  build-and-publish:
+  build-and-update-manifest:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,10 +30,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/baihakitanjung/hermes3d
+          images: ghcr.io/${{ github.repository }}
           tags: |
-            type=sha,format=short,prefix=v0.1-
-            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,format=short,prefix=v0.1.
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -41,8 +40,26 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update manifest repo image tag
+        env:
+          MANIFEST_DEPLOY_KEY: ${{ secrets.MANIFEST_REPO_SSH_KEY }}
+          IMAGE_TAG: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$MANIFEST_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git clone git@github.com:BaihakiTanjung/k3s-manifest.git manifest-repo
+          cd manifest-repo
+          sed -i "s|ghcr.io/baihakitanjung/hermes3d:[^[:space:]]*|ghcr.io/baihakitanjung/hermes3d:${IMAGE_TAG}|" apps/hermes3d/deployment.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/hermes3d/deployment.yaml
+          git commit -m "chore(hermes3d): deploy ${IMAGE_TAG}"
+          git push
