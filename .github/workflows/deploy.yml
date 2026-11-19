@@ -1,4 +1,4 @@
-name: Build and Publish Hermes3D
+name: Build and Publish Hermes3D (Manual)
 
 on:
   push:
