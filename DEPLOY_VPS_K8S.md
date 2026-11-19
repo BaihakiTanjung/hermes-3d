@@ -1,22 +1,44 @@
 # Panduan Setup: Hermes di VPS (Host OS) + Hermes3D di Kubernetes (Pod via Traefik)
 
 Panduan ini mengatur arsitektur terpisah:
-1. **Hermes Agent** berjalan langsung di **Host OS VPS** (punya akses penuh ke OS, disk `~/.hermes`, cron, tools, dan 9Router).
-2. **Hermes3D (Frontend 3D)** berjalan sebagai **Pod di Cluster Kubernetes** di bawah Ingress **Traefik**.
+1. **Hermes Agent** berjalan langsung di **Host OS VPS** via PM2 (punya akses penuh ke OS, disk `~/.hermes`, cron, tools, dan 9Router).
+2. **Hermes3D (Frontend 3D)** berjalan sebagai **Pod di Cluster Kubernetes** di namespace `hermes-3d` di bawah Ingress **Traefik**.
 
 ---
 
-## Arsitektur
+## 1. Peta Port & Aturan Firewall VPS
+
+| Komponen | Port | Bind / Listen | Diekspos ke Publik? | Keterangan |
+|---|---|---|---|---|
+| **Traefik (K8s Ingress)** | **`443`** (HTTPS) / `80` (HTTP) | `0.0.0.0` (IP Publik VPS) | **YA (Satu-satunya)** | Entry point publik user (`https://hermes.domainkamu.com`) |
+| **Pod `hermes3d-ui`** | `3000` | In-Cluster Pod IP | **TIDAK** | Hanya diakses internal oleh Traefik via Service K8s |
+| **Host `hermes serve`** | `9119` | `0.0.0.0` (Internal VPS) | **TIDAK (Wajib diblock)** | Hanya diakses oleh Pod K8s via internal `status.hostIP:9119` |
+
+### Konfigurasi Firewall di VPS (UFW):
+```bash
+# 1. Buka akses publik HANYA untuk Traefik web traffic
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# 2. Buka port 9119 HANYA untuk subnet Pod K8s (misal K3s/RKE2: 10.42.0.0/16 atau flannel)
+# Ganti 10.42.0.0/16 dengan Pod CIDR cluster kamu
+sudo ufw allow from 10.42.0.0/16 to any port 9119 proto tcp
+```
+
+---
+
+## 2. Arsitektur Komunikasi
 
 ```text
 [ Browser / Internet ]
          │ (HTTPS / WSS port 443)
          ▼
 [ Traefik Ingress (K8s Cluster) ]
-         │
+         │ (ClusterIP internal port 3000)
          ▼
-[ Pod hermes3d-ui (K8s) ]
-         │ (WebSocket keluar cluster)
+[ Pod hermes3d-ui (Namespace: hermes-3d) ]
+         │
+         │ (WebSocket via status.hostIP:9119 - CNI Gateway internal, no hairpin NAT)
          ▼
 [ Host VPS: port 9119 ] ──▶ [ Hermes Agent (hermes serve via PM2) ]
                                       │
@@ -26,18 +48,14 @@ Panduan ini mengatur arsitektur terpisah:
 
 ---
 
-## Bagian 1: Setup di VPS (Host OS)
+## 3. Setup di Host VPS (Hermes Agent)
 
-Hermes Agent berjalan di host VPS menggunakan PM2 agar stabil dan auto-restart.
+Hermes Agent berjalan di host VPS menggunakan PM2 agar stabil dan auto-restart tanpa intervensi manual.
 
-### 1. Jalankan Hermes Serve di 0.0.0.0
-Agar pod Kubernetes bisa menghubungi Hermes di port 9119, Hermes Agent harus listen di `0.0.0.0` (bukan hanya localhost).
+### Konfigurasi Headless Auth & Host Bind
+Agar `hermes serve` dapat menerima koneksi dari pod K8s tanpa stuck di prompt interaktif username/password:
 
-Buat file `/etc/systemd/system/hermes-agent.service` atau gunakan **PM2**.
-
-**Jika Menggunakan PM2 di VPS:**
-Buat file `~/ecosystem.hermes.js`:
-
+Buat/update file ecosystem di VPS (misal `~/ecosystem.hermes.js` atau di folder project):
 ```javascript
 module.exports = {
   apps: [
@@ -47,10 +65,10 @@ module.exports = {
       args: "serve --host 0.0.0.0 --port 9119 --skip-build",
       env: {
         // Token session gateway untuk koneksi WebSocket dari pod Hermes3D (harus match secret K8s)
-        HERMES_DASHBOARD_SESSION_TOKEN: "qd1212dad12312",
+        HERMES_DASHBOARD_SESSION_TOKEN: "GANTI_TOKEN_GATEWAY_RAHASIA",
         // Wajib saat bind 0.0.0.0 agar hermes serve tidak stuck pada prompt interaktif auth
         HERMES_DASHBOARD_USERNAME: "admin",
-        HERMES_DASHBOARD_PASSWORD: "admin",
+        HERMES_DASHBOARD_PASSWORD: "GANTI_PASSWORD_DASHBOARD_RAHASIA",
       },
       autorestart: true,
       restart_delay: 4000,
@@ -59,51 +77,35 @@ module.exports = {
 };
 ```
 
-Jalankan:
+Jalankan via PM2:
 ```bash
 pm2 start ~/ecosystem.hermes.js
 pm2 save
 pm2 startup
 ```
 
-### 2. Atur Firewall / Security Group VPS
-**SANGAT PENTING (Keamanan):**
-Jangan buka port `9119` ke publik umum (`0.0.0.0/0`).
-Hanya izinkan port `9119` dari:
-- **IP Node Kubernetes** (IP keluar Pod / NAT gateway cluster).
-- Atau jika VPS dan K8s berada di satu jaringan private/VPC, gunakan IP Private VPS.
+---
 
-Contoh UFW di VPS:
+## 4. Persiapan Path Deployment di VPS untuk CI/CD
+
+GitHub Actions workflow menjalankan SSH script yang membaca manifest dari folder home:
 ```bash
-sudo ufw allow from <IP_CLUSTER_K8S> to any port 9119 proto tcp
+# Di VPS (user rlordz12):
+mkdir -p /home/rlordz12/hermes-3d
+cp k8s-hermes3d.yaml /home/rlordz12/hermes-3d/k8s-hermes3d.yaml
 ```
 
 ---
 
-## Bagian 2: Setup di Kubernetes (Hermes3D Pod)
+## 5. Manifest Kubernetes (`k8s-hermes3d.yaml`)
 
-### 1. Build & Push Image Docker Hermes3D
-Dari laptop kamu (atau CI/CD), build Docker image dengan perubahan bridge terbaru:
-
-```bash
-cd /Users/bae/Documents/GitHub/hermes-3d
-
-# Build docker image
-docker build -t ghcr.io/baihakitanjung/hermes-3d:latest .
-
-# Push ke registry (GitHub Container Registry / Docker Hub)
-docker push ghcr.io/baihakitanjung/hermes-3d:latest
-```
-
-### 2. Manifest Kubernetes (`k8s-hermes3d.yaml`)
-
-Terapkan manifest berikut di cluster K8s kamu:
+Manifest ini berada di namespace `hermes-3d` dan menggunakan `status.hostIP` agar pod otomatis menemukan IP internal node/host VPS tanpa terbentur masalah Hairpin NAT IP publik:
 
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: hermes3d
+  name: hermes-3d
 ---
 apiVersion: v1
 kind: Secret
@@ -112,7 +114,10 @@ metadata:
   namespace: hermes-3d
 type: Opaque
 stringData:
+  # Token login saat user pertama kali membuka web UI
   STUDIO_ACCESS_TOKEN: "ganti-token-login-ui-bebas"
+  # Token auth ke gateway hermes serve di port 9119 host (harus sama dengan HERMES_DASHBOARD_SESSION_TOKEN di VPS)
+  HERMES_GATEWAY_TOKEN: "GANTI_TOKEN_GATEWAY_RAHASIA"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -131,6 +136,7 @@ spec:
       labels:
         app: hermes3d-ui
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: hermes3d
           image: ghcr.io/baihakitanjung/hermes-3d:latest
@@ -150,16 +156,40 @@ spec:
                 secretKeyRef:
                   name: hermes3d-secret
                   key: STUDIO_ACCESS_TOKEN
-            # Arahkan ke IP VPS tempat Hermes Agent berjalan
+            - name: HERMES3D_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes3d-secret
+                  key: HERMES_GATEWAY_TOKEN
+            - name: HERMES3D_ADAPTER_TYPE
+              value: "hermes-agent"
+            # Downward API: mengambil IP internal node host
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            # K8s env expansion langsung ke internal host gateway
             - name: HERMES3D_GATEWAY_URL
-              value: "ws://:9119"
+              value: "ws://$(HOST_IP):9119"
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "200m"
+              memory: "384Mi"
             limits:
               cpu: "1000m"
               memory: "1Gi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -174,7 +204,39 @@ spec:
       port: 3000
       targetPort: 3000
 ---
-# Ingress Traefik (CRD IngressRoute)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes3d-network-policy
+  namespace: hermes-3d
+spec:
+  podSelector:
+    matchLabels:
+      app: hermes3d-ui
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Traffic HTTP dari Traefik Ingress
+    - ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Akses ke port 9119 host node VPS
+    - ports:
+        - port: 9119
+          protocol: TCP
+    # Akses keluar untuk LLM router (port 443 & 80)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -193,27 +255,22 @@ spec:
     secretName: hermes3d-cert-secret
 ```
 
-Terapkan ke cluster:
-```bash
-kubectl apply -f k8s-hermes3d.yaml
-```
-
 ---
 
-## Bagian 3: Verifikasi
+## 6. Verifikasi & Troubleshooting
 
-1. **Cek Pod Hermes3D di K8s**:
+1. **Cek status pod di namespace `hermes-3d`**:
    ```bash
-   kubectl get pods -n hermes3d
-   kubectl logs -n hermes3d deploy/hermes3d-ui -f
+   kubectl get pods -n hermes-3d
+   kubectl logs -n hermes-3d deploy/hermes3d-ui -f
    ```
-   Pastikan log menampilkan:
-   ```text
-   [gateway-proxy] transport: embedded hermes-agent bridge (JSON-RPC translation)
+2. **Cek service Hermes di host VPS**:
+   ```bash
+   pm2 status
+   pm2 logs hermes-agent
+   ss -tulpn | grep 9119
    ```
-
-2. **Cek Akses Web**:
-   - Buka `https://hermes.domainkamu.com`
-   - Masukkan `STUDIO_ACCESS_TOKEN` saat diminta.
-   - Status pojok kanan atas berwarna hijau (`Connected`).
-   - Meja agen, kanban, dan tools langsung tersinkron dari host VPS.
+3. **Buka di browser**:
+   - Kunjungi `https://hermes.domainkamu.com`.
+   - Masukkan `STUDIO_ACCESS_TOKEN`.
+   - Status di pojok kanan atas hijau (`Connected`).
