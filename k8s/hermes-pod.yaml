@@ -14,7 +14,7 @@ metadata:
 type: Opaque
 stringData:
   # Session token for the agent gateway; must match on both containers.
-  HERMES_DASHBOARD_SESSION_TOKEN: "change-me-gateway-token"
+  HERMES_DASHBOARD_SESSION_TOKEN: "qd1212dad12312"
   # Browser login token for the Hermes3D UI.
   STUDIO_ACCESS_TOKEN: "change-me-ui-token"
 ---

@@ -47,10 +47,10 @@ module.exports = {
       args: "serve --host 0.0.0.0 --port 9119 --skip-build",
       env: {
         // Token session gateway untuk koneksi WebSocket dari pod Hermes3D (harus match secret K8s)
-        HERMES_DASHBOARD_SESSION_TOKEN: "GANTI_TOKEN_GATEWAY_RAHASIA",
+        HERMES_DASHBOARD_SESSION_TOKEN: "qd1212dad12312",
         // Wajib saat bind 0.0.0.0 agar hermes serve tidak stuck pada prompt interaktif auth
         HERMES_DASHBOARD_USERNAME: "admin",
-        HERMES_DASHBOARD_PASSWORD: "GANTI_PASSWORD_DASHBOARD_RAHASIA",
+        HERMES_DASHBOARD_PASSWORD: "admin",
       },
       autorestart: true,
       restart_delay: 4000,
