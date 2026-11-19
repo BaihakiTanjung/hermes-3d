@@ -57,7 +57,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           git clone git@github.com:BaihakiTanjung/k3s-manifest.git manifest-repo
           cd manifest-repo
-          sed -i "s|ghcr.io/baihakitanjung/hermes3d:[^[:space:]]*|ghcr.io/baihakitanjung/hermes3d:${IMAGE_TAG}|" apps/hermes3d/deployment.yaml
+          sed -i "s|ghcr.io/baihakitanjung/hermes-3d:[^[:space:]]*|ghcr.io/baihakitanjung/hermes-3d:${IMAGE_TAG}|" apps/hermes3d/deployment.yaml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/hermes3d/deployment.yaml
