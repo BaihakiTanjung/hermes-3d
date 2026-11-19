@@ -81,9 +81,11 @@ const resolveClientIp = (req) => {
 
 function createAccessGate(options) {
   const token = String(options?.token ?? "").trim();
+  const username = String(options?.username ?? "").trim();
+  const password = String(options?.password ?? "");
   const cookieName = String(options?.cookieName ?? "studio_access").trim() || "studio_access";
 
-  const enabled = Boolean(token);
+  const enabled = Boolean(token || (username && password));
   const rateLimiter = createRateLimiter(10, 60_000);
 
   const getAuthState = (req) => {
@@ -91,7 +93,9 @@ function createAccessGate(options) {
     const ip = resolveClientIp(req);
     const cookieHeader = req.headers?.cookie;
     const cookies = parseCookies(cookieHeader);
-    const authorized = safeCompare(cookies[cookieName] || "", token);
+    const authorized = token
+      ? safeCompare(cookies[cookieName] || "", token)
+      : safeCompare(cookies[cookieName] || "", `${username}:authenticated`);
     if (authorized) {
       rateLimiter.reset(ip);
       return { authorized: true, limited: false };
@@ -103,27 +107,36 @@ function createAccessGate(options) {
     return { authorized: false, limited: rateLimiter.isLimited(ip) };
   };
 
-  const isAuthorized = (req) => !enabled || safeCompare(parseCookies(req.headers?.cookie)[cookieName] || "", token);
+  const isAuthorized = (req) => {
+    const value = parseCookies(req.headers?.cookie)[cookieName] || "";
+    return !enabled || (token ? safeCompare(value, token) : safeCompare(value, `${username}:authenticated`));
+  };
 
   const handleLogin = (req, res) => {
     if (!enabled) { res.statusCode = 503; res.end(); return; }
-    if (req.headers?.["x-forwarded-proto"]?.split(",")[0]?.trim().toLowerCase() !== "https") {
-      res.statusCode = 426; res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "HTTPS required." })); return;
-    }
+    const isHttps = req.headers?.["x-forwarded-proto"]?.split(",")[0]?.trim().toLowerCase() === "https";
     const ip = resolveClientIp(req);
     if (rateLimiter.isLimited(ip)) { res.statusCode = 429; res.end(JSON.stringify({ error: "Too many login attempts." })); return; }
     let body = "";
     req.on("data", (chunk) => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
-      let supplied = "";
-      try { supplied = JSON.parse(body).token; } catch {}
-      if (typeof supplied !== "string" || !safeCompare(supplied, token)) {
+      let suppliedUsername = "";
+      let suppliedPassword = "";
+      try {
+        const parsed = JSON.parse(body);
+        suppliedUsername = parsed.username;
+        suppliedPassword = parsed.password;
+      } catch {}
+      const valid = username
+        ? typeof suppliedUsername === "string" && typeof suppliedPassword === "string" && safeCompare(suppliedUsername, username) && safeCompare(suppliedPassword, password)
+        : typeof suppliedPassword === "string" && safeCompare(suppliedPassword, token);
+      if (!valid) {
         rateLimiter.recordFailure(ip); res.statusCode = rateLimiter.isLimited(ip) ? 429 : 401;
-        res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ error: "Invalid access token." })); return;
+        res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ error: "Invalid username or password." })); return;
       }
       rateLimiter.reset(ip); res.statusCode = 204;
-      res.setHeader("Set-Cookie", `${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Secure`);
+      const cookieValue = token || `${username}:authenticated`;
+      res.setHeader("Set-Cookie", `${cookieName}=${encodeURIComponent(cookieValue)}; Path=/; HttpOnly; SameSite=Strict${isHttps ? "; Secure" : ""}`);
       res.end();
     });
   };
