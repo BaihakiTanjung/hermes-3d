@@ -1,4 +1,4 @@
-name: Build and Deploy Hermes-3D
+name: Build and Publish Hermes3D
 
 on:
   push:
@@ -7,8 +7,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build-and-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,16 +24,16 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/hermes3d
           tags: |
-            type=sha,format=short,prefix=v0.1.
-            type=raw,value=latest
+            type=sha,format=short,prefix=v0.1-
+            type=raw,value=main,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -38,19 +41,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Deploy to K8s via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            export KUBECONFIG=/home/rlordz12/.kube/config
-            TAG="${{ steps.meta.outputs.version }}"
-            sed "s|ghcr.io/baihakitanjung/hermes-3d:latest|ghcr.io/${{ github.repository }}:${TAG}|g" /home/rlordz12/hermes-3d/k8s-hermes3d.yaml | kubectl apply -f -
-            kubectl rollout status deployment/hermes3d-ui -n hermes-3d --timeout=180s

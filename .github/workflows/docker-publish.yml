@@ -40,23 +40,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tags=()
           ref_name="$(printf '%s' "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | tr '/_' '-' | tr -cd 'a-z0-9.-')"
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=("${IMAGE_NAME}:main")
+            tag="${IMAGE_NAME}:main"
           elif [[ "${GITHUB_REF}" == refs/heads/* ]]; then
-            tags+=("${IMAGE_NAME}:${ref_name}")
+            tag="${IMAGE_NAME}:${ref_name}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${IMAGE_NAME}:${GITHUB_REF#refs/tags/v}"
+          else
+            echo "Unsupported ref: ${GITHUB_REF}" >&2
+            exit 1
           fi
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
-            tags+=("${IMAGE_NAME}:${version}")
-            tags+=("${IMAGE_NAME}:latest")
-          fi
-          {
-            echo "value<<EOF"
-            printf "%s\n" "${tags[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "value=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         uses: docker/build-push-action@v6
