@@ -31,8 +31,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY ecosystem.config.js ./ecosystem.config.js
 
-# Ensure non-root node user has ownership
-RUN chown -R node:node /app
+# Ensure cache directory exists and node user owns the runtime files
+RUN mkdir -p /app/.next/cache && chown -R node:node /app
+
 USER node
 
 EXPOSE 3000
