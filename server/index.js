@@ -118,7 +118,7 @@ async function main() {
       accessGate.handleLogin(req, res);
       return;
     }
-    if (accessGate.enabled && !accessGate.isAuthorized(req) && req.method === "GET" && !pathname.startsWith("/api/") && pathname !== "/login") {
+    if (accessGate.enabled && !accessGate.isAuthorized(req) && req.method === "GET" && !pathname.startsWith("/api/") && !pathname.startsWith("/_next/") && pathname !== "/login") {
       res.statusCode = 302; res.setHeader("Location", "/login"); res.end(); return;
     }
     if (accessGate.handleHttp(req, res)) return;
