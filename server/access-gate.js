@@ -103,10 +103,47 @@ function createAccessGate(options) {
     return { authorized: false, limited: rateLimiter.isLimited(ip) };
   };
 
+  const isAuthorized = (req) => !enabled || safeCompare(parseCookies(req.headers?.cookie)[cookieName] || "", token);
+
+  const handleLogin = (req, res) => {
+    if (!enabled) { res.statusCode = 503; res.end(); return; }
+    if (req.headers?.["x-forwarded-proto"]?.split(",")[0]?.trim().toLowerCase() !== "https") {
+      res.statusCode = 426; res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "HTTPS required." })); return;
+    }
+    const ip = resolveClientIp(req);
+    if (rateLimiter.isLimited(ip)) { res.statusCode = 429; res.end(JSON.stringify({ error: "Too many login attempts." })); return; }
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let supplied = "";
+      try { supplied = JSON.parse(body).token; } catch {}
+      if (typeof supplied !== "string" || !safeCompare(supplied, token)) {
+        rateLimiter.recordFailure(ip); res.statusCode = rateLimiter.isLimited(ip) ? 429 : 401;
+        res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ error: "Invalid access token." })); return;
+      }
+      rateLimiter.reset(ip); res.statusCode = 204;
+      res.setHeader("Set-Cookie", `${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Secure`);
+      res.end();
+    });
+  };
+
+  const handleLogout = (req, res) => {
+    res.statusCode = 204;
+    res.setHeader("Set-Cookie", `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`);
+    res.end();
+  };
+
   const handleHttp = (req, res) => {
+    const pathname = String(req.url || "/").split("?")[0];
+    if ((req.method === "GET" && pathname === "/login") || (req.method === "POST" && pathname === "/api/auth/login")) return false;
+    if (req.method === "POST" && pathname === "/api/auth/logout") { handleLogout(req, res); return true; }
     if (!enabled) return false;
     const auth = getAuthState(req);
     if (!auth.authorized) {
+      if (req.headers?.accept?.includes("text/html") && req.method === "GET" && !pathname.startsWith("/api/")) {
+        res.statusCode = 302; res.setHeader("Location", "/login"); res.end(); return true;
+      }
       const statusCode = auth.limited ? 429 : 401;
       if (String(req.url || "/").startsWith("/api/")) {
         res.statusCode = statusCode;
@@ -137,7 +174,7 @@ function createAccessGate(options) {
     return getAuthState(req).authorized;
   };
 
-  return { enabled, handleHttp, allowUpgrade };
+  return { enabled, handleHttp, allowUpgrade, isAuthorized, handleLogin };
 }
 
 module.exports = { createAccessGate };

@@ -112,18 +112,25 @@ async function main() {
     handleUpgrade(req, socket, head);
   };
 
+  const handleHttp = (req, res) => {
+    const pathname = String(req.url || "/").split("?")[0];
+    if (req.method === "POST" && pathname === "/api/auth/login") {
+      accessGate.handleLogin(req, res);
+      return;
+    }
+    if (accessGate.enabled && !accessGate.isAuthorized(req) && req.method === "GET" && !pathname.startsWith("/api/") && pathname !== "/login") {
+      res.statusCode = 302; res.setHeader("Location", "/login"); res.end(); return;
+    }
+    if (accessGate.handleHttp(req, res)) return;
+    handle(req, res);
+  };
+
   const httpsCert = useHttps ? await generateHttpsCert() : null;
 
   const createServer = () =>
     useHttps
-      ? https.createServer(httpsCert, (req, res) => {
-          if (accessGate.handleHttp(req, res)) return;
-          handle(req, res);
-        })
-      : http.createServer((req, res) => {
-          if (accessGate.handleHttp(req, res)) return;
-          handle(req, res);
-        });
+      ? https.createServer(httpsCert, handleHttp)
+      : http.createServer(handleHttp);
 
   const servers = hostnames.map(() => createServer());
 
