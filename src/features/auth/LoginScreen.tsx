@@ -44,7 +44,7 @@ export function LoginScreen() {
           <h2>Welcome back</h2><p className="login-hint">Enter your username and password to continue.</p>
           <form onSubmit={submit}>
             <label htmlFor="studio-username">USERNAME</label>
-            <input id="studio-username" name="username" type="text" autoComplete="username" required autoFocus placeholder="admin" />
+            <input className="login-field login-username" id="studio-username" name="username" type="text" autoComplete="username" required autoFocus placeholder="admin" />
             <label htmlFor="studio-password">PASSWORD</label>
             <div className="login-input-wrap"><input id="studio-password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required placeholder="Enter your password" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
             {error && <p className="login-error" role="alert">{error}</p>}
