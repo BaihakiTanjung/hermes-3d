@@ -17,6 +17,8 @@
  *   HERMES_API_URL        Hermes HTTP API base URL   (default: http://localhost:8642)
  *   HERMES_API_KEY        Bearer token for Hermes     (default: empty)
  *   HERMES_ADAPTER_PORT   WebSocket port              (default: 18789)
+ *   HERMES_ADAPTER_HOST   WebSocket bind address       (default: 127.0.0.1)
+ *                                 (set to a private node IP only with firewall restrictions)
  *   HERMES_MODEL          Model identifier            (default: hermes)
  *   HERMES_AGENT_NAME     Display name in Hermes3D UI   (default: Hermes)
  */
