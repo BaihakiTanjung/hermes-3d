@@ -29,7 +29,6 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/server ./server
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY ecosystem.config.js ./ecosystem.config.js
 
 # Ensure non-root node user has ownership
