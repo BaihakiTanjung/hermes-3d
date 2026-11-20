@@ -39,4 +39,4 @@ USER node
 EXPOSE 3000 18789
 
 # pm2-runtime runs as PID 1, forwards signals, streams logs directly to docker/k8s stdout
-CMD ["pm2-runtime", "start", "ecosystem.config.js"]
+CMD ["pm2-runtime", "start", "ecosystem.config.js", "--only", "hermes3d-ui"]
